@@ -1,40 +1,48 @@
 # 城市天气与空气质量出行助手
 
-课程项目第一版：用 Open-Meteo 的地理编码、天气和空气质量接口取得逐小时预测，按城市坐标、时区与小时融合，显示趋势和有依据的出行提示。自然语言输入支持规则解析；配置模型接口后可使用 AI 解析。模型仅提取采集参数，不生成天气数据。
+将同一城市的逐小时天气与空气质量预测合并显示，便于比较出行时段。支持手动填写、规则解析、AI 解析和自动解析，也可查看历史查询或下载 CSV、JSON。
 
-## 运行
+## 启动
 
-克隆仓库后，在仓库目录执行：
+需要 Python 3.11 或更新版本。在 Windows PowerShell 中进入源码目录后运行：
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python app.py
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
 ```
 
-浏览器打开 `http://127.0.0.1:5000`。先选城市、日期、时段、活动，再点击查询。地理编码返回多个结果时须选择候选城市。可输入“明天下午在上海跑步”试用规则解析。
+也可以运行 `run.ps1`。浏览器打开 `http://127.0.0.1:5000`，填写城市、日期、时段和活动后查询。输入“明天下午在上海跑步”可试用规则解析。AI 配置完成后，可输入“明天下午想去上海跑个步”试用自动解析。
 
-协作流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。提交前运行 `python -m unittest discover -s tests -v`；GitHub Actions 会对推送和 Pull Request 运行相同检查。
+## 配置 AI 解析
 
-如需启用 AI 解析，在启动前设置 `MODEL_BASE_URL`（兼容 OpenAI Chat Completions 的服务根地址，通常以 `/v1` 结尾）、`MODEL_API_KEY`、`MODEL_NAME`。例如在 PowerShell 中用 `$env:MODEL_BASE_URL=...` 设置。密钥仅放环境变量，不提交到项目。
+在启动服务的同一 PowerShell 窗口中设置三个环境变量。以 DeepSeek 为例：
 
-## 数据与口径
+```powershell
+$env:MODEL_BASE_URL = 'https://api.deepseek.com'
+$env:MODEL_NAME = 'deepseek-flash'
+$taskKey = Read-Host 'DeepSeek API Key' -AsSecureString
+$env:MODEL_API_KEY = [System.Net.NetworkCredential]::new('', $taskKey).Password
+.\.venv\Scripts\python.exe app.py
+```
 
-- 天气：`temperature_2m`、`precipitation_probability`、`wind_speed_10m`。
-- 空气质量：`pm2_5`、`european_aqi`。European AQI 与中国 AQI 不是同一指标。
-- 查询限未来 5 天。页面内容为预测，不是现场观测；空气质量模型约 11 km 分辨率，不提供街道级判断。
-- SQLite 文件在 `data/travel.sqlite3`，保存 UTC 获取时间、坐标、时区、原始接口响应和融合记录。用于复核和准备演示材料。
-- 建议阈值见 `config.py`，属于项目演示规则，不是官方健康指引。缺失值不插补。
+自动解析先尝试规则，未匹配时交给模型。手动表单、规则解析和历史查询可直接使用。模型配置从环境变量读取。
 
-## 项目结构
+## 查询与数据
 
-`api_client.py` 调用接口；`core.py` 负责时间融合和建议；`parser.py` 负责规则／模型解析；`app.py` 提供页面与 API；`templates/` 和 `static/` 为界面。
+- 项目按城市当地日期提供包含当天在内的 5 天查询。天气字段为气温、降水概率和 10 米风速，空气质量字段为 PM2.5 和 European AQI。
+- 选定城市后，以同一坐标和时区请求 Open-Meteo 的两类预测接口。按小时对齐数据，缺失字段显示为空。
+- 相对优选小时先按项目提示等级排序，再比较降水、风速、PM2.5 和 European AQI 的相对阈值评分。
+- 预测缓存有效期为 15 分钟。勾选“重新获取最新预测”可直接请求接口。若接口暂不可用而有同一发起日的缓存，页面显示已有预测并标明获取时间。
+- `data/travel.sqlite3` 保存采集时间、原始响应与查询结果。包含示例数据库的版本可直接查看上海和北京的历史查询。CSV、JSON 导出链接位于逐小时结果上方。
 
-## 汇报前验证
+数据来源：[Open-Meteo 天气](https://open-meteo.com/en/docs)、[Open-Meteo 空气质量](https://open-meteo.com/en/docs/air-quality-api)和[CAMS](https://atmosphere.copernicus.eu/)。
 
-1. 用上海、北京等城市完成真实请求，记录页面截图和 SQLite 中的原始响应。
-2. 测试同名地点选择、超出 5 天、缺少时段和接口异常。
-3. 建立人工标注语句集，在同一批句子上对比规则与 AI 的字段正确率、失败率、耗时和调用成本。未配置模型时不要宣称已经完成 AI 实测。
-4. 保留一份实际运行截图或录屏供现场接口异常时演示。
+## 验证
 
-运行 `python evaluate_parser.py` 可生成带逐条结果与耗时的 `data/parser_evaluation.json`。未配置模型接口时只运行规则基线，不会生成虚假的模型结果。
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe evaluate_parser.py --date 2026-11-15
+```
+
+评测脚本用同一批 48 条标注语句运行规则与模型解析流程，结果写入 `data/parser_evaluation.json` 和 `data/parser_evaluation.csv`。参数 `--rule-only` 用于单独运行规则基线。模型评测使用 API 额度。

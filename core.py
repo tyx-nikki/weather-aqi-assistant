@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import math
 from zoneinfo import ZoneInfo
 
 from config import THRESHOLDS
@@ -6,21 +7,40 @@ from config import THRESHOLDS
 
 def _columns(payload, names):
     hourly = payload.get("hourly", {})
+    if not isinstance(hourly, dict) or not isinstance(hourly.get("time"), list):
+        raise ValueError("预测响应缺少有效的逐小时时间序列")
     times = hourly.get("time", [])
-    return {time: {name: hourly.get(name, [None] * len(times))[i]
-                   if i < len(hourly.get(name, [])) else None for name in names}
-            for i, time in enumerate(times)}
+    if any(not isinstance(t, str) or len(t) != 16 for t in times) or len(set(times)) != len(times):
+        raise ValueError("预测时间序列格式异常或包含重复小时")
+    columns = {key: hourly.get(key) for key in names}
+    return {
+        time: {
+            name: values[i] if isinstance(values, list) and i < len(values) else None
+            for name, values in columns.items()
+        }
+        for i, time in enumerate(times)
+    }
 
 
 def merge_forecasts(weather, air):
+    if weather.get("timezone") and air.get("timezone") and weather["timezone"] != air["timezone"]:
+        raise ValueError("天气与空气质量时区不一致，不能直接按当地小时融合")
     weather_names = ("temperature_2m", "precipitation_probability", "wind_speed_10m")
     air_names = ("pm2_5", "european_aqi")
     w = _columns(weather, weather_names)
     a = _columns(air, air_names)
-    return [{"time": time, **w.get(time, {}), **a.get(time, {}),
-             "complete": time in w and time in a and
-             all(value is not None for value in [*w.get(time, {}).values(), *a.get(time, {}).values()])}
-            for time in sorted(set(w) | set(a))]
+    rows = []
+    for time in sorted(set(w) | set(a)):
+        row = {"time": time, **{k: None for k in (*weather_names, *air_names)}, **w.get(time, {}), **a.get(time, {})}
+        for key in (*weather_names, *air_names):
+            value = row[key]
+            if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                or (key != "temperature_2m" and value < 0)
+                or (key == "precipitation_probability" and value > 100)):
+                row[key] = None
+        row["complete"] = all(row[k] is not None for k in (*weather_names, *air_names))
+        rows.append(row)
+    return rows
 
 
 def evaluate(row, activity):
@@ -57,3 +77,16 @@ def select_hours(rows, day, period, timezone):
     hours = {"全天": range(24), "上午": range(6, 12), "下午": range(12, 18),
              "晚上": range(18, 24)}[period]
     return [row for row in rows if row["time"][:10] == day and int(row["time"][11:13]) in hours]
+
+
+def best_hour(rows):
+    usable = [row for row in rows if row.get("complete")]
+    if not usable:
+        return None
+    def rank(row):
+        level = {"较适合": 0, "需留意": 1, "暂不推荐": 2}[row["advice"]["level"]]
+        score = row["precipitation_probability"]/70 + row["wind_speed_10m"]/40 + row["pm2_5"]/50 + row["european_aqi"]/80
+        return level, score, row["time"]
+    chosen = min(usable, key=rank)
+    return {"time": chosen["time"], "level": chosen["advice"]["level"],
+            "reasons": chosen["advice"]["reasons"], "method": "先比较提示等级，再比较四项指标相对阈值之和"}

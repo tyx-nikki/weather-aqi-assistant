@@ -6,6 +6,8 @@ MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "").rstrip("/")
 MODEL_API_KEY = os.getenv("MODEL_API_KEY", "")
 MODEL_NAME = os.getenv("MODEL_NAME", "")
 REQUEST_TIMEOUT = 12
+MODEL_TIMEOUT = 45
+CACHE_SECONDS = 900
 
 # Project demonstration thresholds, not medical or official travel guidance.
 THRESHOLDS = {
