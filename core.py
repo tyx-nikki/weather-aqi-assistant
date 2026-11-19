@@ -83,10 +83,42 @@ def best_hour(rows):
     usable = [row for row in rows if row.get("complete")]
     if not usable:
         return None
-    def rank(row):
-        level = {"较适合": 0, "需留意": 1, "暂不推荐": 2}[row["advice"]["level"]]
-        score = row["precipitation_probability"]/70 + row["wind_speed_10m"]/40 + row["pm2_5"]/50 + row["european_aqi"]/80
-        return level, score, row["time"]
-    chosen = min(usable, key=rank)
+    chosen = min(usable, key=hour_rank)
     return {"time": chosen["time"], "level": chosen["advice"]["level"],
             "reasons": chosen["advice"]["reasons"], "method": "先比较提示等级，再比较四项指标相对阈值之和"}
+
+
+def hour_rank(row):
+    level = {"较适合": 0, "需留意": 1, "暂不推荐": 2}[row["advice"]["level"]]
+    score = row["precipitation_probability"]/70 + row["wind_speed_10m"]/40 + row["pm2_5"]/50 + row["european_aqi"]/80
+    return level, score, row["time"]
+
+
+def activity_window(rows, duration, earliest):
+    """Rank complete consecutive local hours within the selected period."""
+    candidates = []
+    blocked = set()
+    for index in range(len(rows) - duration + 1):
+        window = rows[index:index + duration]
+        start = datetime.fromisoformat(window[0]["time"])
+        if start < earliest or not all(row["complete"] for row in window):
+            continue
+        if any(datetime.fromisoformat(row["time"]) != start + timedelta(hours=i)
+               for i, row in enumerate(window)):
+            continue
+        worst = max(window, key=hour_rank)
+        if worst["advice"]["level"] == "暂不推荐":
+            blocked.update(worst["advice"]["reasons"])
+            continue
+        ranks = [hour_rank(row) for row in window]
+        priority = (max(rank[0] for rank in ranks), sum(rank[1] for rank in ranks), start)
+        result = dict(start=window[0]["time"], end=(start + timedelta(hours=duration)).isoformat(timespec="minutes"),
+                      level=worst["advice"]["level"], reasons=worst["advice"]["reasons"],
+                      max_rain=max(row["precipitation_probability"] for row in window),
+                      max_aqi=max(row["european_aqi"] for row in window))
+        candidates.append((priority, result))
+    if candidates:
+        return min(candidates, key=lambda item: item[0])[1]
+    if blocked:
+        return {"message": "所有数据完整的候选时段均含暂不推荐的小时。", "reasons": sorted(blocked)}
+    return {"message": "可出发的时间内没有足够的连续完整预测小时，请缩短活动或更换时段。", "reasons": []}

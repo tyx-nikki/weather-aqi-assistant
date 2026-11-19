@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const localDate = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 $('date').value = localDate; $('date').min=localDate; const endDate=new Date(localDate+'T00:00:00+08:00');endDate.setDate(endDate.getDate()+4);$('date').max=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(endDate);
-const payload = () => ({city:$('city').value.trim(),date:$('date').value,period:$('period').value,activity:$('activity').value,refresh:$('refresh').checked});
+const payload = () => ({city:$('city').value.trim(),date:$('date').value,period:$('period').value,activity:$('activity').value,duration_hours:Number($('duration').value),refresh:$('refresh').checked});
 async function post(path, body) {
   const response = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data = await response.json(); return {response,data};
@@ -34,7 +34,16 @@ async function search(selected_city=null) {
 function render(data){
   $('results').hidden=false;
   $('meta').textContent=`${({snapshot:'历史快照 · ',cache:'15分钟内缓存 · ',stale:'接口暂不可用，显示历史预测 · ',live:'最新获取 · '})[data.source_mode]||(data.snapshot?'历史快照 · ':'')}${data.city.name} · ${data.city.admin1||''} · ${data.city.timezone} · 获取时间 ${new Date(data.fetched_at).toLocaleString('zh-CN')} · 数据来源：Open-Meteo`;
-  for(const kind of ['csv','json'])$('export-'+kind).href=`/api/history/${data.query_id}/export.${kind}`; const best=data.best_hour;$('best-hour').textContent=best?`相对优选小时：${best.time.slice(11,16)} · ${best.level}（${best.method}）`:'当前时段没有完整指标，请选择其他时段。'; const counts={};for(const row of data.rows)counts[row.advice.level]=(counts[row.advice.level]||0)+1;
+  for(const kind of ['csv','json'])$('export-'+kind).href=`/api/history/${data.query_id}/export.${kind}`; const best=data.best_hour;$('best-hour').textContent=best?`相对优选小时：${best.time.slice(11,16)} · ${best.level}（${best.method}）`:'当前时段没有完整指标，请选择其他时段。';
+  const windowResult = data.activity_window;
+  if (windowResult) {
+    const label = data.query.duration_hours + ' 小时活动';
+    const details = windowResult.start
+      ? `${windowResult.start.replace('T',' ')} 至 ${windowResult.end.replace('T',' ')} · ${windowResult.level}。最高降水概率 ${windowResult.max_rain}%，最高 European AQI ${windowResult.max_aqi}。`
+      : windowResult.message;
+    $('best-hour').textContent = label + ' · ' + details + windowResult.reasons.join('；');
+  }
+  const counts={};for(const row of data.rows)counts[row.advice.level]=(counts[row.advice.level]||0)+1;
   $('summary').textContent=`共 ${data.rows.length} 个小时；较适合 ${counts['较适合']||0}，需留意 ${counts['需留意']||0}，暂不推荐 ${counts['暂不推荐']||0}，数据不完整 ${counts['数据不完整']||0}。`;
   const tbody=$('rows');tbody.replaceChildren();
   for(const row of data.rows){const tr=document.createElement('tr');
@@ -61,7 +70,7 @@ async function loadHistory(){
   try {const response=await fetch('/api/history');if(!response.ok)throw Error('无法加载历史记录');
     const data=await response.json();const select=$('history');select.replaceChildren();
     for(const item of data.items){const option=document.createElement('option');option.value=item.id;
-      option.textContent=`${item.city} · ${item.query.date} ${item.query.period} · 采集于 ${new Date(item.fetched_at).toLocaleString('zh-CN')}`;select.append(option);}
+      option.textContent=`${item.city} · ${item.query.date} ${item.query.period} · ${item.query.activity} ${item.query.duration_hours || 1} 小时 · 采集于 ${new Date(item.fetched_at).toLocaleString('zh-CN')}`;select.append(option);}
     $('replay').disabled=!data.items.length;
   }catch(e){$('status').textContent=e.message;}
 }

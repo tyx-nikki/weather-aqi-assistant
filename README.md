@@ -46,3 +46,7 @@ $env:MODEL_API_KEY = [System.Net.NetworkCredential]::new('', $taskKey).Password
 ```
 
 评测脚本用同一批 48 条标注语句运行规则与模型解析流程，结果写入 `data/parser_evaluation.json` 和 `data/parser_evaluation.csv`。参数 `--rule-only` 用于单独运行规则基线。模型评测使用 API 额度。
+
+## 连续出行时段
+
+在表单选择 1 至 4 小时的活动时长。查询会在所选日期和时段内比较仍可出发的整点，要求每个小时预测完整、时间连续。包含“暂不推荐”小时的组合会被排除。候选时段先比较最差小时的提示等级，再比较各小时的四项指标评分总和，同分时优先较早出发。结束时间表示活动结束的当地整点。新查询的推荐随历史快照和 JSON 导出保存。

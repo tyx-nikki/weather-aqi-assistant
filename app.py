@@ -12,7 +12,7 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from api_client import DataError, fetch_forecasts, find_cities
 from config import CACHE_SECONDS, DATABASE
-from core import best_hour, evaluate, merge_forecasts, select_hours
+from core import activity_window, best_hour, evaluate, merge_forecasts, select_hours
 from parser import ModelServiceError, auto_parse, model_available, model_parse, rule_parse, validate
 
 app = Flask(__name__)
@@ -98,6 +98,10 @@ def forecast():
         return jsonify(error="重新获取选项须为布尔值"), 400
     try:
         value = validate(payload)
+        duration = payload.get("duration_hours", 1)
+        if type(duration) is not int or not 1 <= duration <= 4:
+            raise ValueError("活动时长须为 1 至 4 个整小时")
+        value["duration_hours"] = duration
         city = payload.get("selected_city")
         candidates = find_cities(value["city"])
         if not candidates:
@@ -137,7 +141,8 @@ def forecast():
             return jsonify(error="该时段没有可用预测数据"), 404
         for row in selected:
             row["advice"] = evaluate(row, value["activity"])
-        result = dict(city=city, fetched_at=fetched_at, rows=selected, query=value,
+        earliest = datetime.now(ZoneInfo(city["timezone"])).replace(tzinfo=None)
+        result = dict(activity_window=activity_window(selected, duration, earliest), city=city, fetched_at=fetched_at, rows=selected, query=value,
             snapshot=False, source_mode=source_mode, best_hour=best_hour(selected),
             units={"temperature_2m": "°C", "precipitation_probability": "%",
                    "wind_speed_10m": "km/h", "pm2_5": "µg/m³", "european_aqi": "European AQI"},
@@ -164,7 +169,7 @@ def history():
         result = json.loads(row[3])
         query = result.get("query", {})
         city_key = result.get("city", {}).get("id", row[1])
-        key = (city_key, row[2], query.get("date"), query.get("period"), query.get("activity"))
+        key = (city_key, row[2], query.get("date"), query.get("period"), query.get("activity"), query.get("duration_hours", 1))
         if key in seen:
             continue
         seen.add(key)
