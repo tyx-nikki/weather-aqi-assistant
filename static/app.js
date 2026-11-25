@@ -1,7 +1,12 @@
 const $ = id => document.getElementById(id);
 const localDate = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 $('date').value = localDate; $('date').min=localDate; const endDate=new Date(localDate+'T00:00:00+08:00');endDate.setDate(endDate.getDate()+4);$('date').max=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(endDate);
-const payload = () => ({city:$('city').value.trim(),date:$('date').value,period:$('period').value,activity:$('activity').value,duration_hours:Number($('duration').value),refresh:$('refresh').checked});
+$('mode').onchange = () => {
+  const trip = $('mode').value === 'trip';
+  for (const id of ['depart-label','return-label']) $(id).hidden = !trip;
+  for (const id of ['period','duration']) $(id).closest('label').hidden = trip;
+};
+const payload = () => ({city:$('city').value.trim(),date:$('date').value,period:$('period').value,activity:$('activity').value,duration_hours:Number($('duration').value),...($('mode').value === 'trip' ? {period:'全天', departure_hour:Number($('departure').value), return_hour:$('return').value === '' ? null : Number($('return').value)} : {}),refresh:$('refresh').checked});
 async function post(path, body) {
   const response = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data = await response.json(); return {response,data};
@@ -43,15 +48,24 @@ function render(data){
       : windowResult.message;
     $('best-hour').textContent = label + ' · ' + details + windowResult.reasons.join('；');
   }
+  if (data.outfit) {
+    $('best-hour').replaceChildren();
+    for (const leg of data.outfit) {
+      const line = document.createElement('p');
+      line.textContent = leg.label + ' ' + leg.time.slice(11) + ' · ' + leg.notes.join('。');
+      $('best-hour').append(line);
+    }
+  }
   const counts={};for(const row of data.rows)counts[row.advice.level]=(counts[row.advice.level]||0)+1;
   $('summary').textContent=`共 ${data.rows.length} 个小时；较适合 ${counts['较适合']||0}，需留意 ${counts['需留意']||0}，暂不推荐 ${counts['暂不推荐']||0}，数据不完整 ${counts['数据不完整']||0}。`;
   const tbody=$('rows');tbody.replaceChildren();
   for(const row of data.rows){const tr=document.createElement('tr');
-    for(const key of ['time','temperature_2m','precipitation_probability','wind_speed_10m','pm2_5','european_aqi']){
+    for(const key of ['time','temperature_2m','apparent_temperature','precipitation_probability','wind_speed_10m','pm2_5','european_aqi']){
       const td=document.createElement('td');td.textContent=key==='time'?row.time.replace('T',' '):(row[key]??'—');tr.append(td);}
     const td=document.createElement('td');const badge=document.createElement('span');badge.className='badge '+(row.advice.level==='暂不推荐'?'bad':row.advice.level==='需留意'?'warn':'');badge.textContent=row.advice.level;td.append(badge);
     const reason=document.createElement('div');reason.textContent=row.advice.reasons.join('；');td.append(reason);tr.append(td);tbody.append(tr);}
-  draw(data.rows);
+  $('chart').parentElement.hidden = Boolean(data.outfit);
+  if (!data.outfit) draw(data.rows);
 }
 function draw(rows){const canvas=$('chart'),ctx=canvas.getContext('2d');const w=canvas.width,h=canvas.height;
   ctx.clearRect(0,0,w,h);ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
@@ -70,7 +84,7 @@ async function loadHistory(){
   try {const response=await fetch('/api/history');if(!response.ok)throw Error('无法加载历史记录');
     const data=await response.json();const select=$('history');select.replaceChildren();
     for(const item of data.items){const option=document.createElement('option');option.value=item.id;
-      option.textContent=`${item.city} · ${item.query.date} ${item.query.period} · ${item.query.activity} ${item.query.duration_hours || 1} 小时 · 采集于 ${new Date(item.fetched_at).toLocaleString('zh-CN')}`;select.append(option);}
+      option.textContent=`${item.city} · ${item.query.date} ${item.query.period} · ${item.query.activity} ${item.query.departure_hour == null ? (item.query.duration_hours || 1) + ' 小时' : item.query.departure_hour + '时出门' + (item.query.return_hour == null ? '' : ' / ' + item.query.return_hour + '时返程')} · 采集于 ${new Date(item.fetched_at).toLocaleString('zh-CN')}`;select.append(option);}
     $('replay').disabled=!data.items.length;
   }catch(e){$('status').textContent=e.message;}
 }

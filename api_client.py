@@ -61,7 +61,7 @@ def fetch_forecasts(city):
     common = {"latitude": city["latitude"], "longitude": city["longitude"],
               "timezone": city["timezone"], "forecast_days": 5}
     weather = get_json("https://api.open-meteo.com/v1/forecast", {
-        **common, "hourly": "temperature_2m,precipitation_probability,wind_speed_10m"
+        **common, "hourly": "temperature_2m,apparent_temperature,precipitation_probability,wind_speed_10m"
     })
     air = get_json("https://air-quality-api.open-meteo.com/v1/air-quality", {
         **common, "hourly": "pm2_5,european_aqi"

@@ -27,15 +27,16 @@ def merge_forecasts(weather, air):
         raise ValueError("天气与空气质量时区不一致，不能直接按当地小时融合")
     weather_names = ("temperature_2m", "precipitation_probability", "wind_speed_10m")
     air_names = ("pm2_5", "european_aqi")
-    w = _columns(weather, weather_names)
+    w = _columns(weather, (*weather_names, "apparent_temperature"))
     a = _columns(air, air_names)
     rows = []
     for time in sorted(set(w) | set(a)):
         row = {"time": time, **{k: None for k in (*weather_names, *air_names)}, **w.get(time, {}), **a.get(time, {})}
-        for key in (*weather_names, *air_names):
+        row.setdefault("apparent_temperature", None)
+        for key in (*weather_names, *air_names, "apparent_temperature"):
             value = row[key]
             if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
-                or (key != "temperature_2m" and value < 0)
+                or (key not in ("temperature_2m", "apparent_temperature") and value < 0)
                 or (key == "precipitation_probability" and value > 100)):
                 row[key] = None
         row["complete"] = all(row[k] is not None for k in (*weather_names, *air_names))

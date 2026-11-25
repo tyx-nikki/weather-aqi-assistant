@@ -12,6 +12,7 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from api_client import DataError, fetch_forecasts, find_cities
 from config import CACHE_SECONDS, DATABASE
+from outfit import trip_hours, outfit_advice
 from core import activity_window, best_hour, evaluate, merge_forecasts, select_hours
 from parser import ModelServiceError, auto_parse, model_available, model_parse, rule_parse, validate
 
@@ -102,6 +103,9 @@ def forecast():
         if type(duration) is not int or not 1 <= duration <= 4:
             raise ValueError("活动时长须为 1 至 4 个整小时")
         value["duration_hours"] = duration
+        stops = trip_hours(payload)
+        if stops:
+            value.update(stops)
         city = payload.get("selected_city")
         candidates = find_cities(value["city"])
         if not candidates:
@@ -137,16 +141,25 @@ def forecast():
         if source_mode != "live":
             merged = merge_forecasts(weather, air)
         selected = select_hours(merged, value["date"], value["period"], city["timezone"])
+        if stops:
+            by_time = {row["time"]: row for row in merged}
+            selected = []
+            for hour in stops.values():
+                stamp = f"{value['date']}T{hour:02}:00"
+                selected.append(by_time.get(stamp, {"time": stamp, "complete": False}))
         if not selected:
             return jsonify(error="该时段没有可用预测数据"), 404
         for row in selected:
             row["advice"] = evaluate(row, value["activity"])
         earliest = datetime.now(ZoneInfo(city["timezone"])).replace(tzinfo=None)
-        result = dict(activity_window=activity_window(selected, duration, earliest), city=city, fetched_at=fetched_at, rows=selected, query=value,
+        result = dict(activity_window=None if stops else activity_window(selected, duration, earliest), city=city, fetched_at=fetched_at, rows=selected, query=value,
             snapshot=False, source_mode=source_mode, best_hour=best_hour(selected),
             units={"temperature_2m": "°C", "precipitation_probability": "%",
                    "wind_speed_10m": "km/h", "pm2_5": "µg/m³", "european_aqi": "European AQI"},
             sources={"weather": "Open-Meteo Weather Forecast API", "air": "Open-Meteo Air Quality API"})
+        result["units"]["apparent_temperature"] = "°C"
+        if stops:
+            result["outfit"] = outfit_advice(selected, value["activity"])
         with db() as connection:
             cursor = connection.execute("INSERT INTO queries (fetched_at,city,latitude,longitude,timezone,weather_json,air_json,merged_json,response_json) VALUES (?,?,?,?,?,?,?,?,?)",
                 (fetched_at, city["name"], city["latitude"], city["longitude"], city["timezone"],
@@ -169,7 +182,7 @@ def history():
         result = json.loads(row[3])
         query = result.get("query", {})
         city_key = result.get("city", {}).get("id", row[1])
-        key = (city_key, row[2], query.get("date"), query.get("period"), query.get("activity"), query.get("duration_hours", 1))
+        key = (city_key, row[2], query.get("date"), query.get("period"), query.get("activity"), query.get("duration_hours", 1), query.get("departure_hour"), query.get("return_hour"))
         if key in seen:
             continue
         seen.add(key)
