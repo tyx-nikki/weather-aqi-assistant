@@ -57,13 +57,35 @@ def find_cities(name):
     return cities
 
 
+WEATHER_FIELDS = ("temperature_2m", "apparent_temperature", "precipitation_probability", "wind_speed_10m")
+AIR_FIELDS = ("pm2_5", "european_aqi")
+
+
+def _hourly(city, fields, allowed, endpoint, day=None):
+    if not fields or any(field not in allowed for field in fields):
+        raise ValueError("预测字段为空或不属于该接口")
+    params = {"latitude": city["latitude"], "longitude": city["longitude"],
+              "timezone": city["timezone"], "hourly": ",".join(fields)}
+    if day is None:
+        params["forecast_days"] = 5
+    else:
+        from datetime import date, datetime, timedelta
+        from zoneinfo import ZoneInfo
+        target = date.fromisoformat(day)
+        today = datetime.now(ZoneInfo(city["timezone"])).date()
+        if not today <= target <= today + timedelta(days=4):
+            raise ValueError("请选择当地日期起未来 5 天内的日期")
+        params.update(start_date=day, end_date=day)
+    return get_json(endpoint, params)
+
+
+def fetch_weather(city, fields=WEATHER_FIELDS, day=None):
+    return _hourly(city, fields, WEATHER_FIELDS, "https://api.open-meteo.com/v1/forecast", day)
+
+
+def fetch_air(city, fields=AIR_FIELDS, day=None):
+    return _hourly(city, fields, AIR_FIELDS, "https://air-quality-api.open-meteo.com/v1/air-quality", day)
+
+
 def fetch_forecasts(city):
-    common = {"latitude": city["latitude"], "longitude": city["longitude"],
-              "timezone": city["timezone"], "forecast_days": 5}
-    weather = get_json("https://api.open-meteo.com/v1/forecast", {
-        **common, "hourly": "temperature_2m,apparent_temperature,precipitation_probability,wind_speed_10m"
-    })
-    air = get_json("https://air-quality-api.open-meteo.com/v1/air-quality", {
-        **common, "hourly": "pm2_5,european_aqi"
-    })
-    return weather, air
+    return fetch_weather(city), fetch_air(city)
